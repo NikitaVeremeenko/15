@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Пятнашки с картинками</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f5f5f5;
+            padding: 20px;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        
+        .game-container {
+            position: relative;
+            margin-bottom: 20px;
+        }
+        
+        .puzzle-board {
+            display: grid;
+            gap: 2px;
+            background-color: #333;
+            padding: 2px;
+            border-radius: 5px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+        
+        .puzzle-piece {
+            background-size: cover;
+            background-position: center;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            position: relative;
+        }
+        
+        .puzzle-piece:hover {
+            transform: scale(1.02);
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+            z-index: 1;
+        }
+        
+        .empty {
+            background-color: #ddd;
+            visibility: hidden;
+        }
+        
+        .timer {
+            font-size: 24px;
+            margin-bottom: 20px;
+            color: #333;
+        }
+        
+        .controls {
+            margin-bottom: 20px;
+        }
+        
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        
+        button:hover {
+            background-color: #45a049;
+        }
+        
+        .confetti {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background-color: #f00;
+            border-radius: 50%;
+            animation: fall 3s linear forwards;
+        }
+        
+        @keyframes fall {
+            to {
+                transform: translateY(100vh) rotate(720deg);
+                opacity: 0;
+            }
+        }
+        
+        .win-message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(76, 175, 80, 0.9);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            font-size: 24px;
+            text-align: center;
+            z-index: 10;
+            display: none;
+            animation: pulse 1.5s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { transform: translate(-50%, -50%) scale(1); }
+            50% { transform: translate(-50%, -50%) scale(1.05); }
+            100% { transform: translate(-50%, -50%) scale(1); }
+        }
+    </style>
+</head>
+<body>
+    <h1>Пятнашки с картинками</h1>
+    <div class="timer">Время: 00:00</div>
+    <div class="controls">
+        <button id="start-btn">Начать игру</button>
+        <button id="shuffle-btn">Перемешать</button>
+    </div>
+    <div class="game-container">
+        <div class="puzzle-board" id="puzzle-board"></div>
+        <div class="win-message" id="win-message">
+            Поздравляем! Вы собрали пазл!<br>
+            <span id="win-time"></span>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const puzzleBoard = document.getElementById('puzzle-board');
+            const startBtn = document.getElementById('start-btn');
+            const shuffleBtn = document.getElementById('shuffle-btn');
+            const timerDisplay = document.querySelector('.timer');
+            const winMessage = document.getElementById('win-message');
+            const winTimeDisplay = document.getElementById('win-time');
+            
+            let rows = 0;
+            let cols = 0;
+            let pieces = [];
+            let emptyPos = { row: 0, col: 0 };
+            let timer = null;
+            let seconds = 0;
+            let gameStarted = false;
+            
+            // Загрузка изображений и инициализация игры
+            async function initGame() {
+                try {
+                    // Получаем список изображений из папки 'pieces'
+                    const response = await fetch('get_pieces.php');
+                    const data = await response.json();
+                    
+                    if (!data.success) {
+                        alert('Ошибка загрузки изображений: ' + data.message);
+                        return;
+                    }
+                    
+                    const imageFiles = data.files;
+                    
+                    // Определяем размеры сетки по именам файлов
+                    const gridSize = determineGridSize(imageFiles);
+                    rows = gridSize.rows;
+                    cols = gridSize.cols;
+                    
+                    // Создаем игровое поле
+                    createBoard(rows, cols);
+                    
+                    // Загружаем и отображаем кусочки
+                    await loadPieces(imageFiles, rows, cols);
+                    
+                    // Начинаем с перемешанного состояния
+                    shufflePieces();
+                    
+                } catch (error) {
+                    console.error('Ошибка инициализации игры:', error);
+                    alert('Произошла ошибка при загрузке игры. Пожалуйста, проверьте консоль для подробностей.');
+                }
+            }
+            
+            // Определение размеров сетки по именам файлов
+            function determineGridSize(imageFiles) {
+                let maxRow = 0;
+                let maxCol = 0;
+                
+                imageFiles.forEach(filename => {
+                    const match = filename.match(/^(\d+)_(\d+)\./);
+                    if (match) {
+                        const row = parseInt(match[1]);
+                        const col = parseInt(match[2]);
+                        
+                        if (row > maxRow) maxRow = row;
+                        if (col > maxCol) maxCol = col;
+                    }
+                });
+                
+                return { rows: maxRow + 1, cols: maxCol + 1 };
+            }
+            
+            // Создание игрового поля
+            function createBoard(rows, cols) {
+                puzzleBoard.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+                puzzleBoard.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+                puzzleBoard.innerHTML = '';
+                
+                for (let row = 0; row < rows; row++) {
+                    for (let col = 0; col < cols; col++) {
+                        const piece = document.createElement('div');
+                        piece.className = 'puzzle-piece';
+                        piece.dataset.row = row;
+                        piece.dataset.col = col;
+                        piece.addEventListener('click', () => handlePieceClick(row, col));
+                        puzzleBoard.appendChild(piece);
+                    }
+                }
+            }
+            
+            // Загрузка кусочков
+            async function loadPieces(imageFiles, rows, cols) {
+                pieces = Array(rows).fill().map(() => Array(cols).fill(null));
+                
+                for (const filename of imageFiles) {
+                    const match = filename.match(/^(\d+)_(\d+)\./);
+                    if (match) {
+                        const row = parseInt(match[1]);
+                        const col = parseInt(match[2]);
+                        
+                        if (row < rows && col < cols) {
+                            const imgUrl = `pieces/${filename}`;
+                            pieces[row][col] = {
+                                row: row,
+                                col: col,
+                                url: imgUrl
+                            };
+                        }
+                    }
+                }
+                
+                // Последний кусочек (нижний правый) будет пустым
+                emptyPos = { row: rows - 1, col: cols - 1 };
+                pieces[emptyPos.row][emptyPos.col] = null;
+                
+                updateBoard();
+            }
+            
+            // Обновление отображения доски
+            function updateBoard() {
+                const allPieces = document.querySelectorAll('.puzzle-piece');
+                
+                allPieces.forEach(pieceElement => {
+                    const row = parseInt(pieceElement.dataset.row);
+                    const col = parseInt(pieceElement.dataset.col);
+                    
+                    if (row === emptyPos.row && col === emptyPos.col) {
+                        pieceElement.classList.add('empty');
+                        pieceElement.style.backgroundImage = 'none';
+                    } else {
+                        pieceElement.classList.remove('empty');
+                        const piece = pieces[row][col];
+                        if (piece) {
+                            pieceElement.style.backgroundImage = `url(${piece.url})`;
+                        }
+                    }
+                });
+            }
+            
+            // Обработка клика по кусочку
+            function handlePieceClick(row, col) {
+                if (!gameStarted) return;
+                
+                // Проверяем, можно ли переместить кусочек
+                if (canMove(row, col)) {
+                    movePiece(row, col);
+                    
+                    // Проверяем, собрана ли головоломка
+                    if (isPuzzleSolved()) {
+                        endGame();
+                    }
+                }
+            }
+            
+            // Проверка, можно ли переместить кусочек
+            function canMove(row, col) {
+                return (Math.abs(row - emptyPos.row) === 1 && col === emptyPos.col) ||
+                       (Math.abs(col - emptyPos.col) === 1 && row === emptyPos.row);
+            }
+            
+            // Перемещение кусочка
+            function movePiece(row, col) {
+                // Меняем местами кусочек и пустую клетку
+                [pieces[row][col], pieces[emptyPos.row][emptyPos.col]] = 
+                    [pieces[emptyPos.row][emptyPos.col], pieces[row][col]];
+                
+                // Обновляем позицию пустой клетки
+                emptyPos = { row, col };
+                
+                updateBoard();
+            }
+            
+            // Перемешивание кусочков
+            function shufflePieces() {
+                if (gameStarted) return;
+                
+                // Алгоритм Fisher-Yates для перемешивания
+                const flatPieces = pieces.flat().filter(p => p !== null);
+                for (let i = flatPieces.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [flatPieces[i], flatPieces[j]] = [flatPieces[j], flatPieces[i]];
+                }
+                
+                // Восстанавливаем двумерный массив
+                let index = 0;
+                for (let row = 0; row < rows; row++) {
+                    for (let col = 0; col < cols; col++) {
+                        if (row === emptyPos.row && col === emptyPos.col) {
+                            pieces[row][col] = null;
+                        } else {
+                            pieces[row][col] = flatPieces[index++];
+                        }
+                    }
+                }
+                
+                updateBoard();
+            }
+            
+            // Проверка, собрана ли головоломка
+            function isPuzzleSolved() {
+                for (let row = 0; row < rows; row++) {
+                    for (let col = 0; col < cols; col++) {
+                        if (row === emptyPos.row && col === emptyPos.col) {
+                            if (pieces[row][col] !== null) return false;
+                        } else {
+                            const piece = pieces[row][col];
+                            if (!piece || piece.row !== row || piece.col !== col) return false;
+                        }
+                    }
+                }
+                return true;
+            }
+            
+            // Начало игры
+            function startGame() {
+                if (gameStarted) return;
+                
+                gameStarted = true;
+                seconds = 0;
+                updateTimer();
+                timer = setInterval(updateTimer, 1000);
+            }
+            
+            // Обновление таймера
+            function updateTimer() {
+                seconds++;
+                const minutes = Math.floor(seconds / 60);
+                const remainingSeconds = seconds % 60;
+                timerDisplay.textContent = `Время: ${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+            }
+            
+            // Завершение игры
+            function endGame() {
+                clearInterval(timer);
+                gameStarted = false;
+                
+                // Показываем последний кусочек
+                const lastPiece = document.querySelector(`.puzzle-piece[data-row="${rows-1}"][data-col="${cols-1}"]`);
+                lastPiece.classList.remove('empty');
+                lastPiece.style.backgroundImage = `url(pieces/${rows-1}_${cols-1}.png)`;
+                
+                // Показываем сообщение о победе
+                winTimeDisplay.textContent = `Ваше время: ${timerDisplay.textContent}`;
+                winMessage.style.display = 'block';
+                
+                // Запускаем конфетти
+                createConfetti();
+            }
+            
+            // Создание эффекта конфетти
+            function createConfetti() {
+                const colors = ['#f00', '#0f0', '#00f', '#ff0', '#f0f', '#0ff'];
+                const container = document.querySelector('.game-container');
+                
+                for (let i = 0; i < 100; i++) {
+                    const confetti = document.createElement('div');
+                    confetti.className = 'confetti';
+                    confetti.style.left = `${Math.random() * 100}%`;
+                    confetti.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+                    confetti.style.width = `${Math.random() * 10 + 5}px`;
+                    confetti.style.height = `${Math.random() * 10 + 5}px`;
+                    confetti.style.animationDuration = `${Math.random() * 2 + 2}s`;
+                    container.appendChild(confetti);
+                    
+                    // Удаляем конфетти после анимации
+                    setTimeout(() => {
+                        confetti.remove();
+                    }, 3000);
+                }
+            }
+            
+            // Сброс игры
+            function resetGame() {
+                clearInterval(timer);
+                gameStarted = false;
+                seconds = 0;
+                timerDisplay.textContent = 'Время: 00:00';
+                winMessage.style.display = 'none';
+                
+                // Удаляем все конфетти
+                document.querySelectorAll('.confetti').forEach(c => c.remove());
+            }
+            
+            // Обработчики кнопок
+            startBtn.addEventListener('click', startGame);
+            shuffleBtn.addEventListener('click', function() {
+                resetGame();
+                shufflePieces();
+            });
+            
+            // Инициализация игры при загрузке
+            initGame();
+        });
+    </script>
+</body>
+</html>
