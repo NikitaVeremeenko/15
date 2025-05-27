@@ -114,10 +114,32 @@
             50% { transform: translate(-50%, -50%) scale(1.05); }
             100% { transform: translate(-50%, -50%) scale(1); }
         }
+
+        .image-selector {
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .image-selector select {
+            padding: 8px;
+            font-size: 16px;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+        }
     </style>
 </head>
 <body>
     <h1>Пятнашки с картинками</h1>
+    <div class="image-selector">
+        <select id="image-select">
+            <option value="">Выберите изображение</option>
+            <option value="nature">Природа</option>
+            <option value="animals">Животные</option>
+            <option value="art">Искусство</option>
+            <option value="custom">Свое изображение</option>
+        </select>
+        <input type="file" id="custom-image" accept="image/*" style="display: none;">
+    </div>
     <div class="timer">Время: 00:00</div>
     <div class="controls">
         <button id="start-btn">Начать игру</button>
@@ -139,6 +161,8 @@
             const timerDisplay = document.querySelector('.timer');
             const winMessage = document.getElementById('win-message');
             const winTimeDisplay = document.getElementById('win-time');
+            const imageSelect = document.getElementById('image-select');
+            const customImageInput = document.getElementById('custom-image');
             
             let rows = 0;
             let cols = 0;
@@ -147,58 +171,74 @@
             let timer = null;
             let seconds = 0;
             let gameStarted = false;
+            let currentImage = null;
             
-            // Загрузка изображений и инициализация игры
-            async function initGame() {
-                try {
-                    // Получаем список изображений из папки 'pieces'
-                    const response = await fetch('get_pieces.php');
-                    const data = await response.json();
-                    
-                    if (!data.success) {
-                        alert('Ошибка загрузки изображений: ' + data.message);
-                        return;
-                    }
-                    
-                    const imageFiles = data.files;
-                    
-                    // Определяем размеры сетки по именам файлов
-                    const gridSize = determineGridSize(imageFiles);
-                    rows = gridSize.rows;
-                    cols = gridSize.cols;
-                    
-                    // Создаем игровое поле
-                    createBoard(rows, cols);
-                    
-                    // Загружаем и отображаем кусочки
-                    await loadPieces(imageFiles, rows, cols);
-                    
-                    // Начинаем с перемешанного состояния
-                    shufflePieces();
-                    
-                } catch (error) {
-                    console.error('Ошибка инициализации игры:', error);
-                    alert('Произошла ошибка при загрузке игры. Пожалуйста, проверьте консоль для подробностей.');
+            // Предопределенные изображения (базовая кодировка в base64)
+            const predefinedImages = {
+                'nature': 'nature.jpg',
+                'animals': 'animals.jpg',
+                'art': 'art.jpg'
+            };
+            
+            // Обработчики событий
+            imageSelect.addEventListener('change', handleImageSelect);
+            customImageInput.addEventListener('change', handleCustomImage);
+            startBtn.addEventListener('click', startGame);
+            shuffleBtn.addEventListener('click', function() {
+                resetGame();
+                shufflePieces();
+            });
+            
+            // Обработка выбора изображения
+            function handleImageSelect(e) {
+                const selected = e.target.value;
+                
+                if (selected === 'custom') {
+                    customImageInput.click();
+                    return;
+                }
+                
+                if (selected && predefinedImages[selected]) {
+                    resetGame();
+                    loadPredefinedImage(selected);
                 }
             }
             
-            // Определение размеров сетки по именам файлов
-            function determineGridSize(imageFiles) {
-                let maxRow = 0;
-                let maxCol = 0;
+            // Обработка загрузки своего изображения
+            function handleCustomImage(e) {
+                const file = e.target.files[0];
+                if (!file) return;
                 
-                imageFiles.forEach(filename => {
-                    const match = filename.match(/^(\d+)_(\d+)\./);
-                    if (match) {
-                        const row = parseInt(match[1]);
-                        const col = parseInt(match[2]);
-                        
-                        if (row > maxRow) maxRow = row;
-                        if (col > maxCol) maxCol = col;
-                    }
-                });
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    resetGame();
+                    processImage(event.target.result);
+                };
+                reader.readAsDataURL(file);
+            }
+            
+            // Загрузка предопределенного изображения
+            function loadPredefinedImage(imageKey) {
+                const imageUrl = `images/${predefinedImages[imageKey]}`;
+                processImage(imageUrl);
+            }
+            
+            // Обработка изображения и создание пазла
+            function processImage(imageUrl) {
+                currentImage = imageUrl;
                 
-                return { rows: maxRow + 1, cols: maxCol + 1 };
+                // По умолчанию делаем сетку 4x4
+                rows = 4;
+                cols = 4;
+                
+                // Создаем игровое поле
+                createBoard(rows, cols);
+                
+                // Создаем кусочки пазла
+                createPieces(imageUrl, rows, cols);
+                
+                // Начинаем с перемешанного состояния
+                shufflePieces();
             }
             
             // Создание игрового поля
@@ -206,6 +246,11 @@
                 puzzleBoard.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
                 puzzleBoard.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
                 puzzleBoard.innerHTML = '';
+                
+                // Устанавливаем размеры доски
+                const boardSize = Math.min(window.innerWidth - 40, 600);
+                puzzleBoard.style.width = `${boardSize}px`;
+                puzzleBoard.style.height = `${boardSize}px`;
                 
                 for (let row = 0; row < rows; row++) {
                     for (let col = 0; col < cols; col++) {
@@ -219,32 +264,50 @@
                 }
             }
             
-            // Загрузка кусочков
-            async function loadPieces(imageFiles, rows, cols) {
+            // Создание кусочков пазла
+            function createPieces(imageUrl, rows, cols) {
                 pieces = Array(rows).fill().map(() => Array(cols).fill(null));
                 
-                for (const filename of imageFiles) {
-                    const match = filename.match(/^(\d+)_(\d+)\./);
-                    if (match) {
-                        const row = parseInt(match[1]);
-                        const col = parseInt(match[2]);
-                        
-                        if (row < rows && col < cols) {
-                            const imgUrl = `pieces/${filename}`;
+                // Создаем временное изображение для вычисления позиций
+                const img = new Image();
+                img.src = imageUrl;
+                img.onload = function() {
+                    const pieceWidth = img.width / cols;
+                    const pieceHeight = img.height / rows;
+                    
+                    for (let row = 0; row < rows; row++) {
+                        for (let col = 0; col < cols; col++) {
+                            // Пропускаем последний кусочек (будет пустым)
+                            if (row === rows - 1 && col === cols - 1) continue;
+                            
+                            // Создаем canvas для вырезания части изображения
+                            const canvas = document.createElement('canvas');
+                            canvas.width = pieceWidth;
+                            canvas.height = pieceHeight;
+                            const ctx = canvas.getContext('2d');
+                            
+                            // Вырезаем часть изображения
+                            ctx.drawImage(
+                                img,
+                                col * pieceWidth, row * pieceHeight, pieceWidth, pieceHeight,
+                                0, 0, pieceWidth, pieceHeight
+                            );
+                            
+                            // Сохраняем данные кусочка
                             pieces[row][col] = {
                                 row: row,
                                 col: col,
-                                url: imgUrl
+                                url: canvas.toDataURL()
                             };
                         }
                     }
-                }
-                
-                // Последний кусочек (нижний правый) будет пустым
-                emptyPos = { row: rows - 1, col: cols - 1 };
-                pieces[emptyPos.row][emptyPos.col] = null;
-                
-                updateBoard();
+                    
+                    // Последний кусочек (нижний правый) будет пустым
+                    emptyPos = { row: rows - 1, col: cols - 1 };
+                    pieces[emptyPos.row][emptyPos.col] = null;
+                    
+                    updateBoard();
+                };
             }
             
             // Обновление отображения доски
@@ -344,7 +407,7 @@
             
             // Начало игры
             function startGame() {
-                if (gameStarted) return;
+                if (gameStarted || !currentImage) return;
                 
                 gameStarted = true;
                 seconds = 0;
@@ -368,7 +431,27 @@
                 // Показываем последний кусочек
                 const lastPiece = document.querySelector(`.puzzle-piece[data-row="${rows-1}"][data-col="${cols-1}"]`);
                 lastPiece.classList.remove('empty');
-                lastPiece.style.backgroundImage = `url(pieces/${rows-1}_${cols-1}.png)`;
+                
+                // Создаем последний кусочек на лету
+                const img = new Image();
+                img.src = currentImage;
+                img.onload = function() {
+                    const pieceWidth = img.width / cols;
+                    const pieceHeight = img.height / rows;
+                    
+                    const canvas = document.createElement('canvas');
+                    canvas.width = pieceWidth;
+                    canvas.height = pieceHeight;
+                    const ctx = canvas.getContext('2d');
+                    
+                    ctx.drawImage(
+                        img,
+                        (cols-1) * pieceWidth, (rows-1) * pieceHeight, pieceWidth, pieceHeight,
+                        0, 0, pieceWidth, pieceHeight
+                    );
+                    
+                    lastPiece.style.backgroundImage = `url(${canvas.toDataURL()})`;
+                };
                 
                 // Показываем сообщение о победе
                 winTimeDisplay.textContent = `Ваше время: ${timerDisplay.textContent}`;
@@ -411,16 +494,6 @@
                 // Удаляем все конфетти
                 document.querySelectorAll('.confetti').forEach(c => c.remove());
             }
-            
-            // Обработчики кнопок
-            startBtn.addEventListener('click', startGame);
-            shuffleBtn.addEventListener('click', function() {
-                resetGame();
-                shufflePieces();
-            });
-            
-            // Инициализация игры при загрузке
-            initGame();
         });
     </script>
 </body>
